@@ -181,6 +181,10 @@
   #include "libs/L6470/L6470_Marlin.h"
 #endif
 
+#if ENABLED(ANYCUBIC_TFT_MODEL)
+  #include "lcd/anycubic_TFT.h"
+#endif
+
 bool Running = true;
 
 // For M109 and M190, this flag may be cleared (by M108) to exit the wait loop
@@ -330,6 +334,26 @@ void disable_all_steppers() {
   disable_e_steppers();
 }
 
+#ifdef ENDSTOP_BEEP
+  void EndstopBeep() {
+    static char last_status=((READ(X_MIN_PIN)<<2)|(READ(Y_MIN_PIN)<<1)|READ(X_MAX_PIN));
+    static unsigned char now_status;
+
+    now_status=((READ(X_MIN_PIN)<<2)|(READ(Y_MIN_PIN)<<1)|READ(X_MAX_PIN))&0xff;
+
+    if(now_status<last_status) {
+      static millis_t endstop_ms = millis() + 300UL;
+      if (ELAPSED(millis(), endstop_ms)) {
+        buzzer.tone(60, 2000);
+      }
+    last_status=now_status;
+    } else if(now_status!=last_status) {
+      last_status=now_status;
+    }
+  }
+#endif
+
+
 #if HAS_FILAMENT_SENSOR
 
   void event_filament_runout() {
@@ -394,7 +418,6 @@ void disable_all_steppers() {
   }
 
 #endif // HAS_FILAMENT_SENSOR
-
 #if ENABLED(G29_RETRY_AND_RECOVER)
 
   void event_probe_failure() {
@@ -427,6 +450,21 @@ void disable_all_steppers() {
 #endif
 
 /**
+ * Printing is active when the print job timer is running
+ */
+bool printingIsActive() {
+  return print_job_timer.isRunning() || IS_SD_PRINTING();
+}
+
+/**
+ * Printing is paused according to SD or host indicators
+ */
+bool printingIsPaused() {
+  return print_job_timer.isPaused() || card.isPaused();
+}
+
+
+/**
  * Manage several activities:
  *  - Check for Filament Runout
  *  - Keep the command buffer full
@@ -445,6 +483,10 @@ void manage_inactivity(const bool ignore_stepper_queue/*=false*/) {
   #if HAS_FILAMENT_SENSOR
     runout.run();
   #endif
+
+  #if ENABLED(ANYCUBIC_TFT_MODEL) && ENABLED(ANYCUBIC_FILAMENT_RUNOUT_SENSOR)
+    AnycubicTFT.FilamentRunout();
+  #endif		
 
   if (queue.length < BUFSIZE) queue.get_available_commands();
 
@@ -684,11 +726,19 @@ void idle(
     }
   #endif
 
+  #ifdef ANYCUBIC_TFT_MODEL
+    AnycubicTFT.CommandScan();
+  #endif
+
   #if ENABLED(MAX7219_DEBUG)
     max7219.idle_tasks();
   #endif
 
-  ui.update();
+  #ifdef ENDSTOP_BEEP
+    EndstopBeep();
+  #endif
+
+   ui.update();
 
   #if ENABLED(HOST_KEEPALIVE_FEATURE)
     gcode.host_keepalive();
@@ -933,6 +983,10 @@ void setup() {
   SERIAL_ECHOLNPGM("start");
   SERIAL_ECHO_START();
 
+ #ifdef ANYCUBIC_TFT_MODEL
+    AnycubicTFT.Setup();
+  #endif
+ 
   #if TMC_HAS_SPI
     #if DISABLED(TMC_USE_SW_SPI)
       SPI.begin();
